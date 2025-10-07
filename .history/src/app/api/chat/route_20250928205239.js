@@ -1,0 +1,31 @@
+import { google } from "@ai-sdk/google";
+import { streamText, convertToModelMessages } from "ai";
+
+export async function POST(req) {
+    try {
+         const result = streamText({
+      model: openai("gpt-5-nano"),
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a helpful coding assistant. Keep responses under 3 sentences and focus on practical examples.",
+        },
+        ...convertToModelMessages(messages),
+      ],
+    });
+
+    // result.usage.then((usage) => {
+    //   console.log({
+    //     messageCount: messages.length,
+    //     inputTokens: usage.inputTokens,
+    //     outputTokens: usage.outputTokens,
+    //     totalTokens: usage.totalTokens,
+    //   });
+    // });
+
+    return result.toUIMessageStreamResponse();
+    } catch (error) {
+        
+    }
+}
