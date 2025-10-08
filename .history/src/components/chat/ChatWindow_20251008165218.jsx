@@ -1,0 +1,615 @@
+"use client";
+
+import { useChat } from "@ai-sdk/react";
+
+import { useState, useRef, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { Input } from "@/components/ui/input";
+import { Send, Mic, Volume2, SquarePause, VolumeOff } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
+// import { WeatherCard } from "@/components/chat/weather-card";
+import Image from "next/image";
+import { DefaultChatTransport } from "ai";
+
+export default function Chat({ chatId, onTitleUpdate }) {
+  const [input, setInput] = useState("");
+
+  const [isPaused, setIsPaused] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  const { messages, sendMessage, setMessages, status, error, stop } = useChat({
+    transport: new DefaultChatTransport({
+      api: `/api/chat/${chatId}/message`,
+    }),
+  });
+
+  const scrollRef = useRef();
+  const [files, setFiles] = useState(undefined);
+  const fileInputRef = useRef(null);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (input === "") return;
+
+    sendMessage({ text: input, files });
+    setInput("");
+    setFiles(undefined);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages]);
+
+  const [isListening, setIsListening] = useState(false);
+
+  const recognitionRef = useRef(null);
+  // const lastSpokenId = useRef(null);
+
+  const handleMic = async () => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported by your browser.");
+      return;
+    }
+
+    // Stop any speech before listening
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+    }
+
+    // Request microphone permission if not already granted
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      alert(
+        "Microphone permission was denied. Please allow microphone access in your browser settings."
+      );
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-IN";
+
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.onerror = (event) => {
+      console.error("Speech recognition error:", event.error);
+      setIsListening(false);
+    };
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setInput(transcript);
+
+      sendMessage({ text: transcript });
+      setInput(""); // Clear the input after sending
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+  const stopSpeech = () => {
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+    setIsPaused(false);
+  };
+
+  const handleSpeak = (message) => {
+    const textToSpeak = message.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("");
+
+    if (!textToSpeak) return;
+
+    let cleanText = textToSpeak
+
+      .replace(/```[\s\S]*?```/g, " here is your code. ")
+
+      .replace(/`([^`]+)`/g, (fullMatch, textInside) => textInside);
+
+    cleanText = cleanText
+      .replace(/(\*\*|__|\*|_|#)/g, "")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+
+    const synth = window.speechSynthesis;
+    if (!synth) {
+      console.error("Speech Synthesis not supported by this browser.");
+      return;
+    }
+
+    // Stop any  speaking utt. before starting a new one
+    if (synth.speaking) {
+      synth.cancel();
+    }
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = "en-US";
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      setIsPaused(false);
+    };
+    utterance.rate = 1.1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    setIsSpeaking(true);
+    synth.speak(utterance);
+  };
+  useEffect(() => {
+    if (chatId) {
+      fetch(`/api/chat/${chatId}`)
+        .then((r) => r.json())
+        .then((data) => {
+          setMessages(data.messages);
+        })
+        .catch((err) => console.error("Failed to load chat history", err));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId, setMessages]);
+  useEffect(() => {
+    if (status === "ready") {
+      onTitleUpdate();
+    }
+  }, [messages, status]);
+console.log(messages)
+  return (
+    <div className="h-full w-full flex justify-center  items-center ">
+      <Card className="w-full md:max-w-[70vw] max-w-xl flex-grow rounded-xl border border-gray-200 bg-white shadow-lg lg:w-1/2">
+        <CardContent className="p-0">
+          <div className="flex md:h-[80vh] h-[86vh] flex-col overflow-y-hidden">
+            <div className="flex flex-grow flex-col space-y-4 overflow-y-auto p-4">
+              {error && (
+                <div className="text-red-500 mb-4">{error.message}</div>
+              )}
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`flex ${
+                    message.role === "user" ? "justify-end" : "justify-start"
+                  }`}
+                >
+                  <div className="text-slate-400">
+                    {message.role === "user" ? "you " : "AI"}
+                    {message.parts.map((part, index) => {
+                      switch (part.type) {
+                        case "reasoning":
+                          return (
+                            <Accordion
+                              type="single"
+                              key={`${message.id}-${index}`}
+                              collapsible
+                            >
+                              <AccordionItem value="item-1">
+                                <AccordionTrigger className=" inline text-slate-600">
+                                  Show thinking
+                                </AccordionTrigger>
+                                <AccordionContent className=" ml-4 p-4 pt-2 text-blue-500">
+                                  <ReactMarkdown>{part.text}</ReactMarkdown>
+                                </AccordionContent>
+                              </AccordionItem>
+                            </Accordion>
+                          );
+                        case "text" :
+                          return (
+                            <div
+                              key={`${message.id}-${index}`}
+                              className={`max-w-full rounded-2xl p-5 ${
+                                message.role === "user"
+                                  ? "rounded-br-none bg-blue-500 text-white"
+                                  : "rounded-bl-none bg-gray-200 text-gray-800"
+                              }`}
+                            >
+                              {" "}
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                  // Headings
+                                  h1: ({ node, ...props }) => (
+                                    <h1
+                                      className="text-3xl font-bold text-gray-900 dark:text-white mb-4 pb-2 border-b border-gray-300 dark:border-gray-600"
+                                      {...props}
+                                    />
+                                  ),
+                                  h2: ({ node, ...props }) => (
+                                    <h2
+                                      className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mt-8 mb-4 pb-2 border-b border-gray-200 dark:border-gray-700"
+                                      {...props}
+                                    />
+                                  ),
+                                  h3: ({ node, ...props }) => (
+                                    <h3
+                                      className="text-xl font-semibold text-gray-800 dark:text-gray-200 mt-6 mb-4"
+                                      {...props}
+                                    />
+                                  ),
+
+                                  // Text & Paragraphs
+                                  p: ({ node, ...props }) => (
+                                    <p
+                                      className={`mb-1 ${
+                                        message.role === "user"
+                                          ? "text-white"
+                                          : " text-gray-700"
+                                      } dark:text-gray-300 leading-relaxed`}
+                                      {...props}
+                                    />
+                                  ),
+                                  strong: ({ node, ...props }) => (
+                                    <strong
+                                      className="font-bold text-gray-800 dark:text-gray-200"
+                                      {...props}
+                                    />
+                                  ),
+                                  a: ({ node, ...props }) => (
+                                    <a
+                                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      {...props}
+                                    />
+                                  ),
+
+                                  // Lists (handles nested lists automatically)
+                                  ul: ({ node, ...props }) => (
+                                    <ul
+                                      className="list-disc list-outside mb-4 pl-6 space-y-3"
+                                      {...props}
+                                    />
+                                  ),
+                                  ol: ({ node, ...props }) => (
+                                    <ol
+                                      className="list-decimal list-outside mb-4 pl-6 space-y-3"
+                                      {...props}
+                                    />
+                                  ),
+                                  li: ({ node, ...props }) => (
+                                    <li
+                                      className="text-gray-700 dark:text-gray-300"
+                                      {...props}
+                                    />
+                                  ),
+
+                                  // Code: Fenced blocks and inline
+                                  code({
+                                    node,
+                                    inline,
+                                    className,
+                                    children,
+                                    ...props
+                                  }) {
+                                    const match = /language-(\w+)/.exec(
+                                      className || ""
+                                    );
+                                    // Fenced code blocks
+                                    if (!inline && match) {
+                                      return (
+                                        <div className="my-4 rounded-md overflow-hidden">
+                                          <SyntaxHighlighter
+                                            style={vscDarkPlus}
+                                            language={match[1]}
+                                            PreTag="div"
+                                            {...props}
+                                          >
+                                            {String(children).replace(
+                                              /\n$/,
+                                              ""
+                                            )}
+                                          </SyntaxHighlighter>
+                                        </div>
+                                      );
+                                    }
+                                    // Inline code
+                                    return (
+                                      <code
+                                        className="font-mono text-sm bg-gray-200 dark:bg-gray-700 text-purple-600 dark:text-purple-400 rounded-md px-1.5 py-1"
+                                        {...props}
+                                      >
+                                        {children}
+                                      </code>
+                                    );
+                                  },
+                                }}
+                              >
+                                {part.text}
+                              </ReactMarkdown>
+                            </div>
+                          );
+                        case "tool-image_gen":
+                          switch (part.state) {
+                            case "input-streaming":
+                              return (
+                                <div
+                                  key={`${message.id}-getWeather-${index}`}
+                                  className="bg-zinc-800/50 border border-zinc-700 p-2 rounded mt-1 mb-2"
+                                >
+                                  <div className="text-sm text-zinc-500">
+                                    Receiving image generation request...
+                                  </div>
+                                  <pre className="text-xs text-zinc-600 mt-1">
+                                    {JSON.stringify(part.input, null, 2)}
+                                  </pre>
+                                </div>
+                              );
+
+                            case "input-available":
+                              return (
+                                <div
+                                  key={`${message.id}-getWeather-${index}`}
+                                  className="bg-zinc-800/50 border border-zinc-700 p-2 rounded mt-1 mb-2"
+                                >
+                                  <div className="text-sm text-zinc-400">
+                                    Generating image for: {part.input.prompt}
+                                  </div>
+                                </div>
+                              );
+
+                            case "output-available":
+                              return (
+                                <div
+                                  key={`${message.id}-getWeather-${index}`}
+                                  className="bg-zinc-800/50 border border-zinc-700 p-2 rounded mt-1 mb-2"
+                                >
+                                  <div>
+                                    <Image
+                                      src={`data:image/png;base64,${part.output}`}
+                                      alt="Generated image"
+                                      width={500}
+                                      height={500}
+                                    />
+                                  </div>
+                                </div>
+                              );
+
+                            case "output-error":
+                              return (
+                                <div
+                                  key={`${message.id}-getWeather-${index}`}
+                                  className="bg-zinc-800/50 border border-zinc-700 p-2 rounded mt-1 mb-2"
+                                >
+                                  <div className="text-sm text-red-400">
+                                    Error: {part.errorText}
+                                  </div>
+                                </div>
+                              );
+
+                            default:
+                              return null;
+                          }
+                          //   case "tool-google_search":
+                          // switch (part.state) {
+                          //   case "input-streaming":
+                          //     return (
+                          //       <div
+                          //         key={`${message.id}-getWeather-${index}`}
+                          //         className="bg-zinc-800/50 border border-zinc-700 p-2 rounded mt-1 mb-2"
+                          //       >
+                          //         <div className="text-sm text-zinc-500">
+                          //           Receiving image generation request...
+                          //         </div>
+                          //         <pre className="text-xs text-zinc-600 mt-1">
+                          //           {JSON.stringify(part.input, null, 2)}
+                          //         </pre>
+                          //       </div>
+                          //     );
+
+                          //   case "input-available":
+                          //     return (
+                          //       <div
+                          //         key={`${message.id}-getWeather-${index}`}
+                          //         className="bg-zinc-800/50 border border-zinc-700 p-2 rounded mt-1 mb-2"
+                          //       >
+                          //         <div className="text-sm text-zinc-400">
+                          //           Generating image for: {part.input.prompt}
+                          //         </div>
+                          //       </div>
+                          //     );
+
+                          //   case "output-available":
+                          //     return (
+                          //       <div
+                          //         key={`${message.id}-getWeather-${index}`}
+                          //         className="bg-zinc-800/50 border border-zinc-700 p-2 rounded mt-1 mb-2"
+                          //       >
+                          //         <div>
+                          //           {part.output}
+                          //         </div>
+                          //       </div>
+                          //     );
+
+                          //   case "output-error":
+                          //     return (
+                          //       <div
+                          //         key={`${message.id}-getWeather-${index}`}
+                          //         className="bg-zinc-800/50 border border-zinc-700 p-2 rounded mt-1 mb-2"
+                          //       >
+                          //         <div className="text-sm text-red-400">
+                          //           Error: {part.errorText}
+                          //         </div>
+                          //       </div>
+                          //     );
+
+                          //   default:
+                          //     return null;
+                          // }
+                        case "file":
+                          if (part.mediaType?.startsWith("image/")) {
+                            return (
+                              <Image
+                                key={`${message.id}-${index}`}
+                                src={part.url}
+                                alt={part.filename ?? `attachment-${index}`}
+                                width={500}
+                                height={500}
+                              />
+                            );
+                          }
+                          if (part.mediaType?.startsWith("application/pdf")) {
+                            return (
+                              <iframe
+                                key={`${message.id}-${index}`}
+                                src={part.url}
+                                width="500"
+                                height="600"
+                                title={part.filename ?? `attachment-${index}`}
+                              />
+                            );
+                          }
+                          return null;
+
+                        default:
+                          return null;
+                      }
+                    })}
+                    {message.role === "user" ? (
+                      ""
+                    ) : isSpeaking ? (
+                      <Button
+                        onClick={stopSpeech}
+                        className="bg-transparent border text-slate-500"
+                      >
+                        <VolumeOff />
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={() => handleSpeak(message)}
+                        className="bg-transparent border text-slate-500"
+                      >
+                        {" "}
+                        <Volume2 />
+                      </Button>
+                    )}
+                    {}
+                  </div>
+                </div>
+              ))}
+              {(status === "submitted" || status === "streaming") && (
+                <div className="flex justify-start">
+                  <div className="max-w-xs rounded-2xl rounded-bl-none bg-gray-200 text-gray-800 p-3 animate-pulse">
+                    AI is typing...
+                  </div>
+                </div>
+              )}
+
+              <div ref={scrollRef} />
+            </div>
+
+            <form onSubmit={handleSubmit}>
+              {files?.length ? (
+                <div className="w-full py-2 border-t rounded-t-2xl text-center bg-gray-100">{`${
+                  files.length
+                } file${files.length > 1 ? "s" : ""} attached`}</div>
+              ) : (
+                ""
+              )}
+              <div className="flex items-center space-x-2 border-t border-gray-200 bg-gray-50 p-4">
+                <div className="flex items-center gap-2">
+                  <label
+                    htmlFor="file-upload"
+                    className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+                    </svg>
+                    {/* {files?.length
+                      ? `${files.length} file${
+                          files.length > 1 ? "s" : ""
+                        } attached`
+                      : "Attach files"} */}
+                  </label>
+                  <input
+                    id="file-upload"
+                    type="file"
+                    className="hidden"
+                    onChange={(event) => {
+                      if (event.target.files) {
+                        setFiles(event.target.files);
+                      }
+                    }}
+                    multiple
+                    ref={fileInputRef}
+                  />
+                </div>
+                <Input
+                  className="flex-1 rounded-full bg-white px-4 py-2"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="How can I help you?"
+                />
+                <Button
+                  type="button"
+                  onClick={handleMic}
+                  className={`rounded-full p-2 ${
+                    isListening ? "bg-red-500 hover:bg-red-600 text-white" : ""
+                  }`}
+                  disabled={status !== "ready"}
+                  title={
+                    isListening ? "Stop listening" : "Listen with microphone"
+                  }
+                >
+                  <Mic />
+                </Button>
+                {status === "submitted" || status === "streaming" ? (
+                  <Button
+                    type="button"
+                    onClick={stop}
+                    className="rounded-full p-2 bg-red-600"
+                  >
+                    <SquarePause />
+                  </Button>
+                ) : (
+                  <Button
+                    type="submit"
+                    className="rounded-full p-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={status !== "ready"}
+                  >
+                    <Send />
+                  </Button>
+                )}
+              </div>
+            </form>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
